@@ -6,7 +6,6 @@ import re
 import os
 
 # --- 国名・表記ゆれ変換マッパー ---
-# ニュースメディアごとの表記ゆれ（例：「パラグアイ共和国」「USA」など）を吸収し、matches.jsonと正確に一致させます。
 TEAM_MAP = {
     "メキシコ合衆国": "メキシコ", "メキシコ": "メキシコ",
     "南アフリカ共和国": "南アフリカ", "南アフリカ": "南アフリカ",
@@ -32,9 +31,10 @@ def clean_text(text):
 
 def scrape_broadcasters_and_commentators():
     json_path = 'matches.json'
-    if not os.path.exists(json_path):
-        print("⚠️ Warning: matches.json not found. Creating a blank list.")
-        # matches.jsonが存在しない場合のエラー落ちを回避するための安全フォールバック
+    
+    # matches.jsonが存在しない、または空の場合の自動修復・防御ロジック
+    if not os.path.exists(json_path) or os.path.getsize(json_path) == 0:
+        print("⚠️ matches.json が存在しないか空です。初期空データを生成します。")
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump([], f)
         
@@ -42,14 +42,14 @@ def scrape_broadcasters_and_commentators():
         try:
             matches = json.load(f)
         except Exception as e:
-            print(f"⚠️ Warning: Failed to parse matches.json: {e}. Initialize with empty.")
+            print(f"⚠️ JSONの読み込みに失敗しました（データ破損の疑い）: {e}")
             matches = []
 
     if not matches:
-        print("matches.json is empty. Skip mapping process.")
+        print("データが空です。処理をスキップします。")
         return
 
-    # 巡回先メディアリスト
+    # 巡回ソース
     SOURCES = [
         {
             "url": "https://times.abema.tv/articles/-/10243707",
@@ -70,10 +70,10 @@ def scrape_broadcasters_and_commentators():
 
     for src in SOURCES:
         try:
-            print(f"🔍 {src['name']} をクローリング中...")
+            print(f"🔍 {src['name']} クローリング開始: {src['url']}")
             res = requests.get(src['url'], headers=headers, timeout=15)
             if res.status_code != 200:
-                print(f"⚠️ {src['name']} 接続失敗 (Status Code: {res.status_code})")
+                print(f"⚠️ {src['name']} 通信失敗 (ステータス: {res.status_code})")
                 continue
 
             res.encoding = 'utf-8'
@@ -101,33 +101,37 @@ def scrape_broadcasters_and_commentators():
                             print(f"🎯 抽出成功 [{team_key[0]} vs {team_key[1]}]: {info_text[:40]}...")
 
         except Exception as e:
-            print(f"❌ {src['name']} クロールエラー: {e}")
+            print(f"❌ {src['name']} 処理中にエラーが発生しましたが、次のソースに移行します: {e}")
 
-    # matches.jsonへのマッピング適用
+    # データのアップデート適用
     updated_count = 0
     for m in matches:
         home = m.get('home')
         away = m.get('away')
+        if not home or not away:
+            continue
         
         team_key = tuple(sorted([home, away]))
         
         if team_key in scraped_commentaries:
             new_commentary = scraped_commentaries[team_key]
-            
             if m.get('commentary') != new_commentary:
                 m['commentary'] = new_commentary
                 updated_count += 1
-                print(f"⚡ [マッピング適用] 試合No.{m['no']} ({home} vs {away}) -> 解説情報を更新しました")
+                print(f"⚡ No.{m['no']} ({home} vs {away}) の解説・実況を更新")
 
-    # 安全な上書き保存（一時ファイルを挟んでセーフティにリプレイス）
-    temp_path = 'matches_temp.json'
-    try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(matches, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, json_path)
-        print(f"💾 同期完了: 計 {updated_count} 試合の解説・中継テキストを自動マッピングしました。")
-    except Exception as e:
-        print(f"❌ 保存時エラー: {e}")
+    # 安全なファイル上書き（テンポラリファイルを介したアトミックライト）
+    if updated_count > 0:
+        temp_path = 'matches_temp.json'
+        try:
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(matches, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, json_path)
+            print(f"💾 同期完了: 計 {updated_count} 試合のデータを更新しました。")
+        except Exception as e:
+            print(f"❌ ファイル保存失敗: {e}")
+    else:
+        print("ℹ️ 新しい差分はありませんでした。")
 
 if __name__ == "__main__":
     scrape_broadcasters_and_commentators()
