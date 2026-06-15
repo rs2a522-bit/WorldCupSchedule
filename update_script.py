@@ -28,20 +28,28 @@ TEAM_MAP = {
 }
 
 def clean_text(text):
-    """不要な空白や改行をクレンジングするヘルパー"""
     return " ".join(text.split())
 
 def scrape_broadcasters_and_commentators():
     json_path = 'matches.json'
     if not os.path.exists(json_path):
-        print("Error: matches.json not found.")
+        print("⚠️ Warning: matches.json not found. Creating a blank list.")
+        # matches.jsonが存在しない場合のエラー落ちを回避するための安全フォールバック
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+        
+    with open(json_path, 'r', encoding='utf-8') as f:
+        try:
+            matches = json.load(f)
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to parse matches.json: {e}. Initialize with empty.")
+            matches = []
+
+    if not matches:
+        print("matches.json is empty. Skip mapping process.")
         return
 
-    with open(json_path, 'r', encoding='utf-8') as f:
-        matches = json.load(f)
-
-    # 巡回先メディアリスト（ABEMA TIMES、サンスポ特設、NHK番組表まとめ等）
-    # 大会中、最も更新が早く、テレビ解説者を一覧表でまとめる大手サイトを網羅します
+    # 巡回先メディアリスト
     SOURCES = [
         {
             "url": "https://times.abema.tv/articles/-/10243707",
@@ -58,7 +66,7 @@ def scrape_broadcasters_and_commentators():
         "Accept-Language": "ja,en-US;q=0.9,en;q=0.8"
     }
 
-    scraped_commentaries = {} # キー: (Home, Away) -> 値: 解説実況テキスト
+    scraped_commentaries = {}
 
     for src in SOURCES:
         try:
@@ -71,28 +79,23 @@ def scrape_broadcasters_and_commentators():
             res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, 'lxml')
 
-            # ページ内のテキスト段落(p)、表の行(tr)、リスト(li)を全走査してパターンをマッチング
             elements = soup.select('.article-body p, table tr, .article-body li, .entry-content p')
             for el in elements:
                 text = el.text.strip()
                 if not text:
                     continue
 
-                # 「解説」または「実況」または「ナビゲーター」を含む行のみを抽出
                 if any(x in text for x in ["解説", "実況", "ゲスト", "ナビゲーター", "出演"]):
-                    # 対戦カードパターン（例: 「日本対オランダ」「日本vsスウェーデン」「メキシコ×南アフリカ」等）を検出
                     match_teams = []
                     for raw_name, clean_name in TEAM_MAP.items():
                         if raw_name in text:
                             if clean_name not in match_teams:
                                 match_teams.append(clean_name)
 
-                    # 行の中にちょうど2つの国名が検出された場合、それは特定の試合の解説行である可能性が極めて高い
                     if len(match_teams) == 2:
                         team_key = tuple(sorted(match_teams))
                         info_text = clean_text(text)
                         
-                        # すでに情報が格納されている場合は、文字数が多い（詳細な）方を優先
                         if team_key not in scraped_commentaries or len(info_text) > len(scraped_commentaries[team_key]):
                             scraped_commentaries[team_key] = info_text
                             print(f"🎯 抽出成功 [{team_key[0]} vs {team_key[1]}]: {info_text[:40]}...")
@@ -100,36 +103,31 @@ def scrape_broadcasters_and_commentators():
         except Exception as e:
             print(f"❌ {src['name']} クロールエラー: {e}")
 
-    # --- matches.json へのマッピング処理 ---
+    # matches.jsonへのマッピング適用
     updated_count = 0
     for m in matches:
         home = m.get('home')
         away = m.get('away')
         
-        # データベース内の国名で検索
         team_key = tuple(sorted([home, away]))
         
         if team_key in scraped_commentaries:
             new_commentary = scraped_commentaries[team_key]
             
-            # デフォルトテキスト、または未確定状態のテキストから更新
             if m.get('commentary') != new_commentary:
                 m['commentary'] = new_commentary
                 updated_count += 1
                 print(f"⚡ [マッピング適用] 試合No.{m['no']} ({home} vs {away}) -> 解説情報を更新しました")
 
-    # 安全な上書き保存（一時ファイル書き込み後にリプレイス）
-    if updated_count > 0:
-        temp_path = 'matches_temp.json'
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(matches, f, ensure_ascii=False, indent=2)
-            os.replace(temp_path, json_path)
-            print(f"💾 同期完了: 計 {updated_count} 試合の解説・中継テキストを自動マッピングしました。")
-        except Exception as e:
-            print(f"❌ 保存時エラー: {e}")
-    else:
-        print("ℹ️ 新たな解説・実況の更新はありませんでした。既存のデータベースを維持します。")
+    # 安全な上書き保存（一時ファイルを挟んでセーフティにリプレイス）
+    temp_path = 'matches_temp.json'
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(matches, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, json_path)
+        print(f"💾 同期完了: 計 {updated_count} 試合の解説・中継テキストを自動マッピングしました。")
+    except Exception as e:
+        print(f"❌ 保存時エラー: {e}")
 
 if __name__ == "__main__":
     scrape_broadcasters_and_commentators()
