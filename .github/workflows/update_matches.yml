@@ -1,0 +1,35 @@
+```yaml
+name: Auto Update W-Cup Matches
+
+on:
+  schedule:
+    - cron: '0 * * * *' # 1時間に1回、自動的にクローラーと自動同期を実行
+  workflow_dispatch: # 管理画面からボタンを押していつでも手動で強制同期が可能
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests beautifulsoup4 lxml
+
+      - name: Run Scraper Script
+        run: python update_script.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add matches.json
+          git diff --cached --quiet || (git commit -m "🤖 [Bot] スコア・解説情報の全自動同期" && git push)
+
+```
