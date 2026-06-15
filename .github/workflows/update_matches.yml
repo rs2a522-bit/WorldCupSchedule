@@ -6,6 +6,10 @@ on:
     - cron: '0 * * * *' # 1時間に1回、自動的にクローラーと自動同期を実行
   workflow_dispatch: # 管理画面からボタンを押していつでも手動で強制同期が可能
 
+# 👇 Actionsにリポジトリ内のファイルを書き換えてコミットする権限を確実に与えます（失敗防止）
+permissions:
+  contents: write
+
 jobs:
   update-data:
     runs-on: ubuntu-latest
@@ -30,6 +34,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
           git add matches.json
+          # データの変更がある場合のみ安全にコミット・プッシュ
           git diff --cached --quiet || (git commit -m "🤖 [Bot] スコア・解説情報の全自動同期" && git push)
 
 ```
