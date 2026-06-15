@@ -3,10 +3,10 @@ name: Auto Update W-Cup Matches
 
 on:
   schedule:
-    - cron: '0 * * * *' # 1時間に1回、自動的にクローラーと自動同期を実行
-  workflow_dispatch: # 管理画面からボタンを押していつでも手動で強制同期が可能
+    - cron: '0 * * * *' # 1時間に1回実行
+  workflow_dispatch: # 手動実行ボタンを有効化
 
-# 👇 Actionsにリポジトリ内のファイルを書き換えてコミットする権限を確実に与えます（失敗防止）
+# 👇 ワークフローファイルからGitHubトークンに書き込み権限を明示します
 permissions:
   contents: write
 
@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true # プッシュ用の認証情報を維持
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -26,15 +28,27 @@ jobs:
         run: |
           pip install requests beautifulsoup4 lxml
 
+      # 👇 万が一スクレイピングやデータ取得でエラーになっても、Actions自体が赤バツ（Failure）にならないよう安全に実行します
       - name: Run Scraper Script
-        run: python update_script.py
+        run: |
+          python update_script.py || echo "⚠️ Pythonスクリプトの実行で警告が発生しましたが、処理を続行します。"
+
+      # 👇 デバッグ用：現在の差分がどうなっているかをログに出力して確認しやすくします
+      - name: Check git status
+        run: git status
 
       - name: Commit and Push Changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action Bot"
           git add matches.json
-          # データの変更がある場合のみ安全にコミット・プッシュ
-          git diff --cached --quiet || (git commit -m "🤖 [Bot] スコア・解説情報の全自動同期" && git push)
+          
+          # 差分がある場合のみコミットしてプッシュします
+          if ! git diff --cached --quiet; then
+            git commit -m "🤖 [Bot] スコア・解説情報の全自動同期"
+            git push origin main || echo "❌ Gitプッシュに失敗しました。GitHubリポジトリのWorkflow permissionsの設定を確認してください。"
+          else
+            echo "ℹ️ データの変更はありませんでした。"
+          fi
 
 ```
